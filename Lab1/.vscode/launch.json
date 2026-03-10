@@ -20,7 +20,8 @@
                 },
             ],
             "MIMode": "gdb",
-            // "miDebuggerPath": "/path/to/your gdb",
+            "miDebuggerPath": "/usr/bin/gdb-multiarch",
+            // "miDebuggerArgs": "--nx -q",
             "targetArchitecture": "arm64",
             "miDebuggerServerAddress": "localhost:1234",
             "preLaunchTask": "Setup QEMU"
