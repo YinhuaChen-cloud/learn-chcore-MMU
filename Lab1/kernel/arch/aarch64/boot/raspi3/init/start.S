@@ -21,11 +21,16 @@
 .extern init_c
 
 BEGIN_FUNC(_start)
+	/* MRS 指令：Move Register from System register */
+	/* x8 = mpidr_el1 */
+	/* MPIDR_EL1: 用来标识“当前这颗 CPU 核”在多核系统中的身份 */
 	mrs	x8, mpidr_el1
+	/* 获取最后一个字节，这就是 cpuid 标识符 */
 	and	x8, x8,	#0xFF
+	/* 如果 cpuid == 0，跳转到 primary */
 	cbz	x8, primary
 
-	/* Wait for bss clear */
+/* 否则进入 wait_for_bss_clear 等待 */
 wait_for_bss_clear:
 	adr	x0, clear_bss_flag
 	ldr	x1, [x0]
