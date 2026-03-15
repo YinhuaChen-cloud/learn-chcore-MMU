@@ -28,6 +28,7 @@ static inline void init_list_head(struct list_head *list)
 	list->prev = list;
 }
 
+// 加在链表头部
 static inline void list_add(struct list_head *new, struct list_head *head)
 {
 	new->next = head->next;
@@ -60,7 +61,8 @@ static inline bool list_empty(struct list_head *head)
 	 container_of_safe(((__obj)->field).next, type, field) : NULL); \
 })
 
-
+// 获取链表中第一个满足条件的元素，条件由 type 和 field 决定
+// ptr: 链表节点指针，type: 包含链表节点的结构体类型，field: 链表节点在结构体中的字段名
 #define list_entry(ptr, type, field) \
 	container_of(ptr, type, field)
 

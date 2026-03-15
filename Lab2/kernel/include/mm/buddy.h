@@ -40,7 +40,9 @@ struct page {
 };
 
 struct free_list {
+        // 链表
         struct list_head free_list;
+        // 当前空闲页的数量
         unsigned long nr_free;
 };
 

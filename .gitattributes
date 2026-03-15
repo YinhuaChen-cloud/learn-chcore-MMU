@@ -1,5 +1,8 @@
 * text eol=lf
 
+Scripts/change_serial -text
+Lab6/user/chcore-libs/graphic/wayland/protocol/xdg_shell.xml -text
+
 *.obj binary
 *.dbg.obj binary
 *.png binary
