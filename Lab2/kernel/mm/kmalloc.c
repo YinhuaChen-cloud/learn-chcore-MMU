@@ -113,6 +113,7 @@ void *_kmalloc(size_t size, bool is_record, size_t *real_size)
         if (unlikely(size == 0))
                 return ZERO_SIZE_PTR;
 
+        // 小于等于 SLAB_MAX_SIZE 的请求使用 slab 分配器分配，大于 SLAB_MAX_SIZE 的请求使用 buddy 分配器分配
         if (size <= SLAB_MAX_SIZE) {
                 /* LAB 2 TODO 3 BEGIN */
                 /* Step 1: Allocate in slab for small requests. */

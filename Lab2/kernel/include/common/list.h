@@ -37,6 +37,8 @@ static inline void list_add(struct list_head *new, struct list_head *head)
 	head->next = new;
 }
 
+// 这里使用双向链表，尾节点的 next 指向 head，head 的 prev 指向尾节点
+// 所以在链表尾部添加元素时，可以直接通过 head->prev 来找到尾节点
 static inline void list_append(struct list_head *new, struct list_head *head)
 {
 	struct list_head *tail = head->prev;

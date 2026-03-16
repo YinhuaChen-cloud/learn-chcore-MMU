@@ -21,6 +21,7 @@
 
 /* slab_pool is also static. We do not add the static modifier due to unit test.
  */
+// 每个 ORDER 对应一个 slab_pool，包含一个 current slab 和一个 partial slab 链表
 struct slab_pointer slab_pool[SLAB_MAX_ORDER + 1];
 static struct lock slabs_locks[SLAB_MAX_ORDER + 1];
 
@@ -106,55 +107,86 @@ static struct slab_header *init_slab_cache(int order, int size)
         unsigned long cnt, obj_size;
         int i;
 
+        /*
+         * 初始化一个新的 slab：
+         * 1) 从 buddy 分配一整块 slab 内存；
+         * 2) 将首个对象槽作为 slab_header 元数据；
+         * 3) 将其余对象槽串成单向空闲链表。
+         */
         addr = alloc_slab_memory(size);
         if (unlikely(addr == NULL))
                 /* Fail: no available memory. */
                 return NULL;
         slab = (struct slab_header *)addr;
 
+        /* 单个对象槽大小（2^order）。 */
         obj_size = order_to_size(order);
         /* The first slot is used as metadata (struct slab_header). */
         BUG_ON(obj_size == 0);
+
+        /* 可分配槽位总数 = slab 总大小 / 槽大小 - 1（扣除 header 槽）。 */
         cnt = size / obj_size - 1;
 
+        /* 第一个可用槽紧跟在 header 槽之后。 */
         slot = (struct slab_slot_list *)((vaddr_t)addr + obj_size);
         slab->free_list_head = (void *)slot;
         slab->order = order;
         slab->total_free_cnt = cnt;
         slab->current_free_cnt = cnt;
 
-        /* The last slot has no next one. */
+        /* 依次链接每个空闲槽，形成 free list。 */
         for (i = 0; i < cnt - 1; ++i) {
                 slot->next_free = (void *)((unsigned long)slot + obj_size);
                 slot = (struct slab_slot_list *)((unsigned long)slot
                                                  + obj_size);
         }
+        /* 空闲链表末尾置空。 */
         slot->next_free = NULL;
 
         return slab;
 }
 
+// 从 partial slab 链表中选择一个 slab 作为新的 current slab，并将其从 partial slab 链表中删除
 static void choose_new_current_slab(struct slab_pointer * __maybe_unused pool)
 {
         /* LAB 2 TODO 2 BEGIN */
         /* Hint: Choose a partial slab to be a new current slab. */
-        /* BLANK BEGIN */
-
-        /* BLANK END */
+        struct slab_header *new_current_slab;
+        // 如果 partial slab 链表是空的，说明没有可用的 slab 了，将 current slab 置为 NULL
+        if (list_empty(&pool->partial_slab_list)) {
+                // 问题: 这里不需要使用 buddy 分配新的 slab 吗？
+                // 回答: 因为在 alloc_in_slab_impl 中，
+                // 如果 current slab 是 NULL，
+                // 就会调用 init_slab_cache 来分配新的 slab，所以这里不需要再分配一次了。
+                pool->current_slab = NULL;
+                return;
+        }
+        // 从 partial slab 链表中选择一个 slab 作为新的 current slab，并将其从 partial slab 链表中删除
+        new_current_slab = list_entry(pool->partial_slab_list.next,
+                                      struct slab_header,
+                                      node);
+        list_del(&new_current_slab->node);
+        pool->current_slab = new_current_slab;
         /* LAB 2 TODO 2 END */
 }
 
+// 从 current slab 的 free list 中分配一个 slot，如果 current slab 已经没有 free slot 了，
+// 就从 partial slab 链表中选择一个 slab 作为新的 current slab，并继续分配
+// order: 5, 6, 7, 8, 9, 10, 11    表示分配 32, 64, 128, 256, 512, 1024, 2048 字节的内存
+// 分配失败返回 NULL，分配成功返回分配的内存地址
 static void *alloc_in_slab_impl(int order)
 {
         struct slab_header *current_slab;
         struct slab_slot_list *free_list;
         void *next_slot;
-        UNUSED(next_slot);
 
+        // 给对应 order 的 slab_pool 加锁，保证线程安全
         lock(&slabs_locks[order]);
 
         current_slab = slab_pool[order].current_slab;
         /* When serving the first allocation request. */
+        // 如果是第一次分配，current slab 还没有被分配出来，就调用 init_slab_cache 来分配一个新的 slab，
+        // 并将其设置为 current slab
         if (unlikely(current_slab == NULL)) {
                 current_slab = init_slab_cache(order, SIZE_OF_ONE_SLAB);
                 if (current_slab == NULL) {
@@ -163,15 +195,38 @@ static void *alloc_in_slab_impl(int order)
                 }
                 slab_pool[order].current_slab = current_slab;
         }
+        // 如果不是第一次分配，说明 current slab 已经被分配出来了，
+        // 就直接从 current slab 的 free list 中分配一个 slot
 
         /* LAB 2 TODO 2 BEGIN */
         /*
          * Hint: Find a free slot from the free list of current slab.
          * If current slab is full, choose a new slab as the current one.
          */
-        /* BLANK BEGIN */
-
-        /* BLANK END */
+        free_list = current_slab->free_list_head;
+        // 如果当前 slot 的 free list 为空，说明 current slab 已经没有 free slot 了，
+        if (unlikely(free_list == NULL)) {
+                // 从 partial slab 链表中选择一个 slab 作为新的 current slab，并继续分配
+                choose_new_current_slab(&slab_pool[order]);
+                current_slab = slab_pool[order].current_slab;
+                // 如果 partial slab 链表中也没有可用的 slab 了，那么 current slab == NULL
+                // 就调用 init_slab_cache 来分配一个新的 slab，并将其设置为 current slab
+                if (unlikely(current_slab == NULL)) {
+                        current_slab = init_slab_cache(order,
+                                                       SIZE_OF_ONE_SLAB);
+                        // 如果分配失败，说明没有可用的内存了，返回 NULL
+                        if (current_slab == NULL) {
+                                unlock(&slabs_locks[order]);
+                                return NULL;
+                        }
+                        slab_pool[order].current_slab = current_slab;
+                }
+                free_list = current_slab->free_list_head;
+        }
+        // 如果当前 slot 的 free list 不为空，说明 current slab 还有 free slot，可以直接分配
+        next_slot = free_list->next_free;
+        current_slab->free_list_head = next_slot;
+        current_slab->current_free_cnt -= 1;
         /* LAB 2 TODO 2 END */
 
         unlock(&slabs_locks[order]);
@@ -232,10 +287,13 @@ void init_slab(void)
 {
         int order;
 
+        // 32 bytes ----> 2KB
         /* slab obj size: 32, 64, 128, 256, 512, 1024, 2048 */
         for (order = SLAB_MIN_ORDER; order <= SLAB_MAX_ORDER; order++) {
                 lock_init(&slabs_locks[order]);
+                // 初始时每个 order 的 current slab 都是 NULL，表示还没有 slab 被分配出来
                 slab_pool[order].current_slab = NULL;
+                // 初始化每个 order 的 partial slab 链表，初始时每个链表都是空的
                 init_list_head(&(slab_pool[order].partial_slab_list));
         }
         kdebug("mm: finish initing slab allocators\n");
@@ -259,6 +317,8 @@ void *alloc_in_slab(unsigned long size, size_t *real_size)
         return alloc_in_slab_impl(order);
 }
 
+// 释放一个 slot，首先需要找到这个 slot 所在的 slab,
+// 然后将这个 slot 插入到 slab 的 free list 中，
 void free_in_slab(void *addr)
 {
         struct page *page;
@@ -273,11 +333,12 @@ void free_in_slab(void *addr)
                 return;
         }
 
-
         slab = page->slab;
         order = slab->order;
         lock(&slabs_locks[order]);
 
+        // 释放一个 slot 后，如果这个 slab 原来是 full 的，那么需要将这个 slab 插入到 partial slab 链表中，
+        // 因为这个 slab 现在有 free slot 了，可以被分配了
         try_insert_full_slab_to_partial(slab);
 
 #if ENABLE_DETECTING_DOUBLE_FREE_IN_SLAB == ON
@@ -296,12 +357,14 @@ void free_in_slab(void *addr)
         /*
          * Hint: Free an allocated slot and put it back to the free list.
          */
-        /* BLANK BEGIN */
-
-        UNUSED(slot);
-        /* BLANK END */
+        // 加到表头
+        slot->next_free = slab->free_list_head;
+        slab->free_list_head = slot;
+        slab->current_free_cnt += 1;
         /* LAB 2 TODO 2 END */
 
+        // 如果这个 slab 现在是 whole free 的了，说明这个 slab 里面的所有 slot 都没有被分配出去了，
+        // 就可以将这个 slab 还给 buddy 系统了，释放掉这个 slab
         try_return_slab_to_buddy(slab, order);
 
         unlock(&slabs_locks[order]);
