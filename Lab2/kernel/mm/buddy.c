@@ -107,12 +107,12 @@ __maybe_unused static struct page * merge_chunk(struct phys_mem_pool *__maybe_un
 
         buddy = get_buddy_chunk(pool, chunk);
 
-        /* Buddy must exist, be free, and be the same order */
-        if (buddy == NULL || buddy->allocated != 0)
+        /* Buddy must exist, be free */
+        // fix: 伙伴块可能更小，因为被 split 了
+        if (buddy == NULL || buddy->allocated != 0 || buddy->order < chunk->order)
                 return chunk;
-        // 我个人认为这里不可能有伙伴块的 order 不同的情况，
-        // 因为只有 order 相同的块才可能是伙伴关系，才能合并
-        BUG_ON(buddy->order != chunk->order);
+        // 伙伴块不可能比 chunk 更大
+        BUG_ON(buddy->order > chunk->order);
 
         /* Remove buddy from its free list */
         list_del(&buddy->node);
@@ -248,6 +248,7 @@ void buddy_free_pages(struct phys_mem_pool *pool, struct page *page)
          * Hint: Merge the chunk with its buddy and put it into
          * a suitable free list.
          */
+        BUG_ON(page->allocated == 0);
         // 此时这个 page 原本是已分配状态，不在任何 free list 里，
         // 所以不需要先从链表摘掉它。
         // 释放该页
